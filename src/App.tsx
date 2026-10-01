@@ -1,396 +1,57 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import {
-  ArrowLeft,
-  Camera,
-  Heart,
-  Image as ImageIcon,
-  LoaderCircle,
-  LogOut,
-  QrCode,
-  ScanLine,
-  Search,
-  Send,
-  Store,
-  UserCircle,
-  X,
-} from 'lucide-react';
+import { ArrowLeft, Camera, Heart, Image as ImageIcon, LoaderCircle, LogOut, QrCode, ScanLine, Search, Send, Store, UserCircle, X } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Html5Qrcode } from 'html5-qrcode';
+import { supabase } from './lib/supabase';
 
-type StoreItem = {
-  id: string;
-  name: string;
-  avatar?: string;
-  address?: string;
-  lastMessage?: string;
-  updatedAt?: string;
-  qrCode?: string;
-};
+type StoreItem = { id:string; name:string; avatar_url?:string|null; address?:string|null; qr_token:string; lastMessage?:string; updatedAt?:string };
+type Message = { id:string; text:string; createdAt:string; photo?:string|null; senderId:string };
+type SellerChat = { id:string; buyerId:string; storeId:string; storeName:string; updatedAt:string };
+const SCANNED_KEY='kakasta_scanned_store_ids';
 
-type Message = {
-  id: string;
-  text: string;
-  createdAt: string;
-  photo?: string;
-};
+async function ensureSession(role:'buyer'|'seller'){
+  let {data:{session}}=await supabase.auth.getSession();
+  if(!session){const r=await supabase.auth.signInAnonymously();if(r.error)throw r.error;session=r.data.session;}
+  if(!session?.user)throw new Error('Не удалось создать сессию.');
+  const {error}=await supabase.from('profiles').upsert({id:session.user.id,role,display_name:role==='seller'?'Продавец':'Покупатель'});
+  if(error)throw error;return session.user.id;
+}
+function readScannedIds(){try{return JSON.parse(localStorage.getItem(SCANNED_KEY)||'[]') as string[]}catch{return[]}}
+function writeScannedIds(ids:string[]){localStorage.setItem(SCANNED_KEY,JSON.stringify([...new Set(ids)]))}
 
-const demoStore: StoreItem = {
-  id: 'demo-store-001',
-  name: 'Магазин у дома',
-  address: 'Астана',
-  lastMessage: 'Здравствуйте! Чем помочь?',
-  updatedAt: new Date().toISOString(),
-  qrCode: 'kakasta:store:demo-store-001',
-};
-
-function App() {
-  const [stores, setStores] = useState<StoreItem[]>([demoStore]);
-  const [selected, setSelected] = useState<StoreItem | null>(null);
-  const [search, setSearch] = useState('');
-  const [liked, setLiked] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(false);
-  const [profile, setProfile] = useState(false);
-  const [seller, setSeller] = useState(false);
-  const [qr, setQr] = useState(false);
-  const [scanner, setScanner] = useState(false);
-  const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState<Message[]>([]);
-
-  const filtered = useMemo(
-    () =>
-      stores.filter((store) =>
-        store.name.toLowerCase().includes(search.toLowerCase()),
-      ),
-    [stores, search],
-  );
-
-  const openStore = (store: StoreItem) => {
-    if (loading) return;
-    setLoading(true);
-    setTimeout(() => {
-      setSelected(store);
-      setMessages([
-        {
-          id: '1',
-          text: store.lastMessage || 'Новый чат',
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      setLoading(false);
-    }, 700);
-  };
-
-  const toggleLike = (id: string) => {
-    setLiked((value) => ({ ...value, [id]: !value[id] }));
-  };
-
-  const send = () => {
-    if (!message.trim()) return;
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        text: message.trim(),
-        createdAt: new Date().toISOString(),
-      },
-    ]);
-    setMessage('');
-  };
-
-  useEffect(() => {
-    if (!scanner) return;
-
-    const reader = new Html5Qrcode('qr-reader');
-
-    reader
-      .start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        (decoded) => {
-          if (!decoded.startsWith('kakasta:store:')) return;
-
-          const id = decoded.split(':').pop() || '';
-          const found =
-            stores.find((store) => store.id === id) ||
-            ({
-              ...demoStore,
-              id,
-              qrCode: decoded,
-            } as StoreItem);
-
-          setStores((current) =>
-            current.some((store) => store.id === found.id)
-              ? current
-              : [found, ...current],
-          );
-          setScanner(false);
-          reader.stop().catch(() => undefined);
-        },
-        () => undefined,
-      )
-      .catch(() => undefined);
-
-    return () => {
-      reader.stop().catch(() => undefined);
-    };
-  }, [scanner, stores]);
-
-  if (selected) {
-    return (
-      <Chat
-        store={selected}
-        messages={messages}
-        message={message}
-        setMessage={setMessage}
-        send={send}
-        back={() => setSelected(null)}
-      />
-    );
-  }
-
-  if (seller) {
-    return <Seller onBack={() => setSeller(false)} onQr={() => setQr(true)} />;
-  }
-
-  return (
-    <main className="app">
-      <div className="sun sun1" />
-      <div className="sun sun2" />
-      <div className="decor">🛒　🧰　📦　🛍️</div>
-
-      <header>
-        <button className="icon" onClick={() => setProfile(true)} aria-label="Профиль">
-          <UserCircle />
-        </button>
-        <div>
-          <b>Kakasta</b>
-          <span>Ваши продавцы и магазины</span>
-        </div>
-        <button className="icon" onClick={() => setSeller(true)} aria-label="Продавец">
-          <Store />
-        </button>
-      </header>
-
-      <section className="hero">
-        <h1>Чаты с магазинами</h1>
-        <p>Сканируйте QR-код продавца, чтобы начать общение</p>
-      </section>
-
-      <div className="search">
-        <Search />
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Поиск магазина"
-          autoComplete="off"
-        />
-      </div>
-
-      <div className="actions">
-        <button onClick={() => setScanner(true)}>
-          <ScanLine /> Сканировать QR
-        </button>
-        <button onClick={() => setQr(true)}>
-          <QrCode /> Мой QR
-        </button>
-      </div>
-
-      <section className="cards">
-        {filtered.map((store) => (
-          <article className="card" key={store.id} onClick={() => openStore(store)}>
-            <div className="avatar">
-              {store.avatar ? <img src={store.avatar} alt="" /> : <Store />}
-            </div>
-
-            <div className="cardbody">
-              <strong>{store.name}</strong>
-              <span>{store.lastMessage}</span>
-              <small>
-                {store.updatedAt
-                  ? new Date(store.updatedAt).toLocaleTimeString('ru-RU', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })
-                  : ''}
-              </small>
-            </div>
-
-            <button
-              className={liked[store.id] ? 'heart active' : 'heart'}
-              onClick={(event) => {
-                event.stopPropagation();
-                toggleLike(store.id);
-              }}
-              aria-label="Добавить в избранное"
-            >
-              <Heart fill={liked[store.id] ? 'currentColor' : 'none'} />
-            </button>
-          </article>
-        ))}
-      </section>
-
-      {profile && (
-        <Modal onClose={() => setProfile(false)} title="Профиль">
-          <p>Покупатель</p>
-          <p className="muted">Здесь будет профиль и настройки аккаунта.</p>
-        </Modal>
-      )}
-
-      {qr && <QrModal onClose={() => setQr(false)} />}
-
-      {scanner && (
-        <Modal onClose={() => setScanner(false)} title="Сканировать QR">
-          <div id="qr-reader" />
-          <p className="muted">Наведите камеру на QR-код магазина.</p>
-        </Modal>
-      )}
-
-      {loading && (
-        <div className="loading">
-          <LoaderCircle className="spin" />
-          <b>Открываем магазин…</b>
-        </div>
-      )}
-    </main>
-  );
+function App(){
+ const [ready,setReady]=useState(false),[error,setError]=useState(''),[userId,setUserId]=useState<string|null>(null),[stores,setStores]=useState<StoreItem[]>([]),[selected,setSelected]=useState<StoreItem|null>(null),[selectedChatId,setSelectedChatId]=useState<string|null>(null),[search,setSearch]=useState(''),[liked,setLiked]=useState<Record<string,boolean>>({}),[loading,setLoading]=useState(false),[profile,setProfile]=useState(false),[seller,setSeller]=useState(false),[qr,setQr]=useState<StoreItem|null>(null),[scanner,setScanner]=useState(false),[message,setMessage]=useState(''),[messages,setMessages]=useState<Message[]>([]);
+ const loadBuyerStores=async()=>{const ids=readScannedIds();if(!ids.length){setStores([]);return}const {data,error:e}=await supabase.from('stores').select('id,name,address,avatar_url,qr_token').in('id',ids);if(e)throw e;const rows=(data||[]) as StoreItem[];const missing=ids.filter(id=>!rows.some(r=>r.id===id));if(missing.length)writeScannedIds(ids.filter(id=>!missing.includes(id)));setStores(rows)};
+ useEffect(()=>{(async()=>{try{const id=await ensureSession('buyer');setUserId(id);await loadBuyerStores();setReady(true)}catch(e){setError(e instanceof Error?e.message:'Ошибка подключения.')}})()},[]);
+ const filtered=useMemo(()=>stores.filter(s=>s.name.toLowerCase().includes(search.toLowerCase())),[stores,search]);
+ const openStore=async(store:StoreItem)=>{if(!userId||loading)return;setLoading(true);try{let {data:chat,error:e}=await supabase.from('chats').select('id').eq('store_id',store.id).eq('buyer_id',userId).maybeSingle();if(e)throw e;if(!chat){const c=await supabase.from('chats').insert({store_id:store.id,buyer_id:userId}).select('id').single();if(c.error)throw c.error;chat=c.data}const r=await supabase.from('messages').select('id,text,photo_url,created_at,sender_id').eq('chat_id',chat.id).order('created_at',{ascending:true});if(r.error)throw r.error;setSelected(store);setSelectedChatId(chat.id);setMessages((r.data||[]).map((m:any)=>({id:m.id,text:m.text||'',photo:m.photo_url,createdAt:m.created_at,senderId:m.sender_id})))}catch(e){setError(e instanceof Error?e.message:'Не удалось открыть чат.')}finally{setLoading(false)}};
+ const send=async()=>{const text=message.trim();if(!text||!userId||!selectedChatId)return;setMessage('');const r=await supabase.from('messages').insert({chat_id:selectedChatId,sender_id:userId,text}).select('id,text,photo_url,created_at,sender_id').single();if(r.error){setMessage(text);setError(r.error.message);return}setMessages(c=>[...c,{id:r.data.id,text:r.data.text||'',photo:r.data.photo_url,createdAt:r.data.created_at,senderId:r.data.sender_id}]);await supabase.from('chats').update({updated_at:new Date().toISOString()}).eq('id',selectedChatId)};
+ const scanResult=async(decoded:string)=>{const token=decoded.startsWith('kakasta:store:')?decoded.slice(15):decoded;if(!token)return;const r=await supabase.from('stores').select('id,name,address,avatar_url,qr_token').eq('qr_token',token).maybeSingle();if(r.error){setError(r.error.message);return}if(!r.data){setError('Этот QR-код магазина не найден.');return}const store=r.data as StoreItem;writeScannedIds([store.id,...readScannedIds()]);setStores(c=>c.some(x=>x.id===store.id)?c:[store,...c]);setScanner(false);await openStore(store)};
+ useEffect(()=>{if(!scanner)return;const reader=new Html5Qrcode('qr-reader');let stopped=false;reader.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:250}},async(decoded)=>{if(stopped)return;stopped=true;await reader.stop().catch(()=>undefined);await scanResult(decoded)},()=>undefined).catch(e=>setError(e instanceof Error?e.message:'Не удалось открыть камеру.'));return()=>{stopped=true;reader.stop().catch(()=>undefined)}},[scanner]);
+ useEffect(()=>{if(!selectedChatId)return;const ch=supabase.channel('kakasta-chat-'+selectedChatId).on('postgres_changes',{event:'INSERT',schema:'public',table:'messages',filter:'chat_id=eq.'+selectedChatId},p=>{const m:any=p.new;setMessages(c=>c.some(x=>x.id===m.id)?c:[...c,{id:m.id,text:m.text||'',photo:m.photo_url,createdAt:m.created_at,senderId:m.sender_id}])}).subscribe();return()=>{supabase.removeChannel(ch)}},[selectedChatId]);
+ const enterSeller=async()=>{try{setLoading(true);const id=await ensureSession('seller');setUserId(id);setSeller(true)}catch(e){setError(e instanceof Error?e.message:'Не удалось открыть кабинет продавца.')}finally{setLoading(false)}};
+ const logoutSeller=async()=>{setLoading(true);await supabase.auth.signOut();setSeller(false);setSelected(null);setSelectedChatId(null);setMessages([]);setUserId(null);try{const id=await ensureSession('buyer');setUserId(id);await loadBuyerStores()}catch(e){setError(e instanceof Error?e.message:'Не удалось выйти из кабинета.')}finally{setLoading(false)}};
+ if(!ready)return <main className="app"><div className="loading"><LoaderCircle className="spin"/><b>{error||'Подключаем Kakasta…'}</b></div></main>;
+ if(selected)return <Chat store={selected} messages={messages} message={message} setMessage={setMessage} send={send} back={()=>{setSelected(null);setSelectedChatId(null);setMessages([])}} userId={userId||''}/>;
+ if(seller)return <Seller userId={userId||''} onBack={()=>setSeller(false)} onLogout={logoutSeller} onQr={setQr}/>;
+ return <main className="app"><div className="sun sun1"/><div className="sun sun2"/><div className="decor">🛒　🧰　📦　🛍️</div><header><button className="icon" onClick={()=>setProfile(true)} aria-label="Профиль"><UserCircle/></button><div><b>Kakasta</b><span>Ваши продавцы и магазины</span></div><button className="icon" onClick={enterSeller} aria-label="Продавец"><Store/></button></header><section className="hero"><h1>Чаты с магазинами</h1><p>Сканируйте QR-код продавца, чтобы начать общение</p></section><div className="search"><Search/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Поиск магазина" autoComplete="off"/></div><div className="actions"><button onClick={()=>setScanner(true)}><ScanLine/> Сканировать QR</button></div><section className="cards">{filtered.map(store=><article className="card" key={store.id} onClick={()=>openStore(store)}><div className="avatar">{store.avatar_url?<img src={store.avatar_url} alt=""/>:<Store/>}</div><div className="cardbody"><strong>{store.name}</strong><span>Открыть чат</span></div><button className={liked[store.id]?'heart active':'heart'} onClick={e=>{e.stopPropagation();setLiked(v=>({...v,[store.id]:!v[store.id]}))}} aria-label="Добавить в избранное"><Heart fill={liked[store.id]?'currentColor':'none'}/></button></article>)}{!filtered.length&&<div className="emptyCard"><Store/><b>Продавцов пока нет</b><span>Сканируйте QR-код продавца, чтобы добавить магазин.</span></div>}</section>{profile&&<Modal onClose={()=>setProfile(false)} title="Профиль"><p>Покупатель</p><p className="muted">Магазины добавляются только после сканирования их QR-кода.</p></Modal>}{qr&&<QrModal store={qr} onClose={()=>setQr(null)}/>} {scanner&&<Modal onClose={()=>setScanner(false)} title="Сканировать QR"><div id="qr-reader"/><p className="muted">Наведите камеру на QR-код магазина.</p></Modal>}{error&&<button className="errorToast" onClick={()=>setError('')}>{error}<span>×</span></button>}{loading&&<div className="loading"><LoaderCircle className="spin"/><b>Подключаем…</b></div>}</main>
 }
 
-function Chat({
-  store,
-  messages,
-  message,
-  setMessage,
-  send,
-  back,
-}: {
-  store: StoreItem;
-  messages: Message[];
-  message: string;
-  setMessage: (value: string) => void;
-  send: () => void;
-  back: () => void;
-}) {
-  return (
-    <main className="chat">
-      <header>
-        <button className="icon" onClick={back} aria-label="Назад">
-          <ArrowLeft />
-        </button>
-        <div>
-          <b>{store.name}</b>
-          <span>{store.address || 'Магазин'}</span>
-        </div>
-        <Heart />
-      </header>
+function Chat({store,messages,message,setMessage,send,back,userId}:{store:StoreItem;messages:Message[];message:string;setMessage:(v:string)=>void;send:()=>void;back:()=>void;userId:string}){return <main className="chat"><header><button className="icon" onClick={back} aria-label="Назад"><ArrowLeft/></button><div><b>{store.name}</b><span>{store.address||'Магазин'}</span></div><Heart/></header><div className="messages">{messages.map(m=><div className={m.senderId===userId?'bubble mine':'bubble'} key={m.id}><span>{m.text}</span><small>{new Date(m.createdAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</small></div>)}</div><div className="composer"><label><Camera/></label><label><ImageIcon/></label><input value={message} onChange={e=>setMessage(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')send()}} placeholder="Сообщение…"/><button onClick={send} aria-label="Отправить"><Send/></button></div></main>}
 
-      <div className="messages">
-        {messages.map((item) => (
-          <div className="bubble" key={item.id}>
-            {item.photo && <img src={item.photo} alt="" />}
-            <span>{item.text}</span>
-            <small>
-              {new Date(item.createdAt).toLocaleTimeString('ru-RU', {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </small>
-          </div>
-        ))}
-      </div>
-
-      <div className="composer">
-        <label>
-          <Camera />
-        </label>
-        <label>
-          <ImageIcon />
-        </label>
-        <input
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') send();
-          }}
-          placeholder="Сообщение…"
-        />
-        <button onClick={send} aria-label="Отправить">
-          <Send />
-        </button>
-      </div>
-    </main>
-  );
+function Seller({userId,onBack,onLogout,onQr}:{userId:string;onBack:()=>void;onLogout:()=>void;onQr:(s:StoreItem)=>void}){
+ const [store,setStore]=useState<StoreItem|null>(null),[chats,setChats]=useState<SellerChat[]>([]),[active,setActive]=useState<SellerChat|null>(null),[messages,setMessages]=useState<Message[]>([]),[text,setText]=useState(''),[busy,setBusy]=useState(true),[error,setError]=useState('');
+ const load=async()=>{setBusy(true);const own=await supabase.from('stores').select('id,name,address,avatar_url,qr_token').eq('owner_id',userId).order('created_at',{ascending:true}).limit(1).maybeSingle();if(own.error){setError(own.error.message);setBusy(false);return}let current=own.data as StoreItem|null;if(!current){const c=await supabase.from('stores').insert({owner_id:userId,name:'Мой магазин',address:'Астана'}).select('id,name,address,avatar_url,qr_token').single();if(c.error){setError(c.error.message);setBusy(false);return}current=c.data as StoreItem}setStore(current);const list=await supabase.from('chats').select('id,buyer_id,store_id,updated_at,stores!inner(name)').eq('store_id',current.id).order('updated_at',{ascending:false});if(list.error){setError(list.error.message);setBusy(false);return}setChats((list.data||[]).map((c:any)=>({id:c.id,buyerId:c.buyer_id,storeId:c.store_id,storeName:c.stores?.name||current!.name,updatedAt:c.updated_at})));setBusy(false)};
+ useEffect(()=>{void load()},[userId]);
+ const loadMessages=async(chatId:string)=>{const r=await supabase.from('messages').select('id,text,photo_url,created_at,sender_id').eq('chat_id',chatId).order('created_at',{ascending:true});if(r.error){setError(r.error.message);return}setMessages((r.data||[]).map((m:any)=>({id:m.id,text:m.text||'',photo:m.photo_url,createdAt:m.created_at,senderId:m.sender_id})))};
+ useEffect(()=>{const ch=supabase.channel('kakasta-seller-'+userId).on('postgres_changes',{event:'*',schema:'public',table:'chats'},()=>void load()).on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},()=>{void load();if(active)void loadMessages(active.id)}).subscribe();return()=>{supabase.removeChannel(ch)}},[userId,active?.id]);
+ const send=async()=>{if(!text.trim()||!active)return;const value=text.trim();setText('');const r=await supabase.from('messages').insert({chat_id:active.id,sender_id:userId,text:value}).select('id,text,photo_url,created_at,sender_id').single();if(r.error){setText(value);setError(r.error.message);return}setMessages(c=>[...c,{id:r.data.id,text:r.data.text||'',photo:r.data.photo_url,createdAt:r.data.created_at,senderId:r.data.sender_id}]);await supabase.from('chats').update({updated_at:new Date().toISOString()}).eq('id',active.id)};
+ if(busy)return <main className="seller"><div className="loading"><LoaderCircle className="spin"/><b>Открываем кабинет…</b></div></main>;
+ if(active)return <main className="seller"><header><button className="icon" onClick={()=>setActive(null)} aria-label="Назад"><ArrowLeft/></button><div><b>{active.storeName}</b><span>Чат с покупателем</span></div><button className="icon" onClick={onLogout} aria-label="Выйти"><LogOut/></button></header><div className="messages">{messages.map(m=><div className={m.senderId===userId?'bubble mine':'bubble'} key={m.id}><span>{m.text}</span><small>{new Date(m.createdAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</small></div>)}</div><div className="composer"><input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')send()}} placeholder="Сообщение покупателю…"/><button onClick={send} aria-label="Отправить"><Send/></button></div>{error&&<button className="errorToast" onClick={()=>setError('')}>{error}<span>×</span></button>}</main>;
+ return <main className="seller"><header><button className="icon" onClick={onBack} aria-label="Назад"><ArrowLeft/></button><div><b>Продавец</b><span>{store?.name||'Мой магазин'}</span></div><button className="icon" onClick={onLogout} aria-label="Выйти"><LogOut/></button></header><div className="sellerEmpty"><Store/><h2>Чаты с покупателями</h2>{!chats.length?<p>Новых чатов пока нет. Покупатель появится здесь после сканирования вашего QR-кода.</p>:<div className="sellerChats">{chats.map(c=><button key={c.id} className="sellerChat" onClick={()=>{setActive(c);void loadMessages(c.id)}}><span>Покупатель</span><small>{new Date(c.updatedAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}</small></button>)}</div>}{store&&<button onClick={()=>onQr(store)}><QrCode/> Показать QR-код</button>}</div>{error&&<button className="errorToast" onClick={()=>setError('')}>{error}<span>×</span></button>}</main>
 }
 
-function Seller({ onBack, onQr }: { onBack: () => void; onQr: () => void }) {
-  return (
-    <main className="seller">
-      <header>
-        <button className="icon" onClick={onBack} aria-label="Назад">
-          <ArrowLeft />
-        </button>
-        <div>
-          <b>Продавец</b>
-          <span>Чаты с покупателями</span>
-        </div>
-        <button className="icon" aria-label="Выйти">
-          <LogOut />
-        </button>
-      </header>
-
-      <div className="sellerEmpty">
-        <Store />
-        <h2>Чаты с покупателями</h2>
-        <p>Новые покупатели появятся после сканирования вашего QR-кода.</p>
-        <button onClick={onQr}>
-          <QrCode /> Показать QR-код
-        </button>
-      </div>
-    </main>
-  );
-}
-
-function Modal({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="overlay">
-      <div className="modal">
-        <button className="close" onClick={onClose} aria-label="Закрыть">
-          <X />
-        </button>
-        <h2>{title}</h2>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function QrModal({ onClose }: { onClose: () => void }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    if (ref.current) {
-      QRCode.toCanvas(ref.current, demoStore.qrCode, {
-        width: 260,
-        margin: 2,
-      });
-    }
-  }, []);
-
-  return (
-    <Modal title="QR-код магазина" onClose={onClose}>
-      <canvas ref={ref} />
-      <strong className="qrname">{demoStore.name}</strong>
-      <p className="muted">Уникальный QR-код этого магазина.</p>
-    </Modal>
-  );
-}
-
+function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}){return <div className="overlay"><div className="modal"><button className="close" onClick={onClose} aria-label="Закрыть"><X/></button><h2>{title}</h2>{children}</div></div>}
+function QrModal({store,onClose}:{store:StoreItem;onClose:()=>void}){const ref=useRef<HTMLCanvasElement>(null);useEffect(()=>{if(ref.current)QRCode.toCanvas(ref.current,'kakasta:store:'+store.qr_token,{width:260,margin:2})},[store.qr_token]);return <Modal title="QR-код магазина" onClose={onClose}><canvas ref={ref}/><strong className="qrname">{store.name}</strong><p className="muted">Этот QR-код уникален для магазина. После сканирования покупателем чат создаётся автоматически.</p></Modal>}
 export default App;
