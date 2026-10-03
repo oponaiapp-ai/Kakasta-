@@ -12,29 +12,57 @@ const SCANNED_KEY='kakasta_scanned_store_ids';
 const NAME_KEY='kakasta_display_name';
 
 async function ensureSession(role:'buyer'|'seller', displayName?:string){
-  let {data:{session}}=await supabase.auth.getSession();
-  if(!session){const r=await supabase.auth.signInAnonymously();if(r.error)throw r.error;session=r.data.session;}
+  let {data:{session},error:sessionError}=await supabase.auth.getSession();
+  if(sessionError)throw sessionError;
+  if(!session){
+    const r=await supabase.auth.signInAnonymously();
+    if(r.error)throw r.error;
+    session=r.data.session;
+  }
   if(!session?.user)throw new Error('Не удалось создать сессию.');
-  const {error}=await supabase.from('profiles').upsert({id:session.user.id,role,display_name:displayName||'Пользователь'});
-  if(error)throw error;return session.user.id;
+
+  const {data:profile,error:profileError}=await supabase
+    .from('profiles')
+    .select('display_name')
+    .eq('id',session.user.id)
+    .maybeSingle();
+  if(profileError)throw profileError;
+
+  const requestedName=displayName?.trim();
+  const existingName=(profile?.display_name||'').trim();
+  const name=requestedName||existingName||'Пользователь';
+
+  const payload:any={id:session.user.id,role};
+  if(requestedName || !profile)payload.display_name=name;
+  const {error}=await supabase.from('profiles').upsert(payload);
+  if(error)throw error;
+  return {id:session.user.id,displayName:name};
 }
 function readScannedIds(){try{return JSON.parse(localStorage.getItem(SCANNED_KEY)||'[]') as string[]}catch{return[]}}
 function writeScannedIds(ids:string[]){localStorage.setItem(SCANNED_KEY,JSON.stringify([...new Set(ids)]))}
 
 function App(){
- const [ready,setReady]=useState(false),[error,setError]=useState(''),[userId,setUserId]=useState<string|null>(null),[displayName,setDisplayName]=useState(localStorage.getItem(NAME_KEY)||''),[nameDraft,setNameDraft]=useState(localStorage.getItem(NAME_KEY)||''),[stores,setStores]=useState<StoreItem[]>([]),[selected,setSelected]=useState<StoreItem|null>(null),[selectedChatId,setSelectedChatId]=useState<string|null>(null),[search,setSearch]=useState(''),[liked,setLiked]=useState<Record<string,boolean>>({}),[loading,setLoading]=useState(false),[profile,setProfile]=useState(false),[seller,setSeller]=useState(false),[qr,setQr]=useState<StoreItem|null>(null),[scanner,setScanner]=useState(false),[message,setMessage]=useState(''),[messages,setMessages]=useState<Message[]>([]);
+ const [ready,setReady]=useState(false),[error,setError]=useState(''),[userId,setUserId]=useState<string|null>(null),[displayName,setDisplayName]=useState(''),[nameDraft,setNameDraft]=useState(localStorage.getItem(NAME_KEY)||''),[stores,setStores]=useState<StoreItem[]>([]),[selected,setSelected]=useState<StoreItem|null>(null),[selectedChatId,setSelectedChatId]=useState<string|null>(null),[search,setSearch]=useState(''),[liked,setLiked]=useState<Record<string,boolean>>({}),[loading,setLoading]=useState(false),[profile,setProfile]=useState(false),[seller,setSeller]=useState(false),[qr,setQr]=useState<StoreItem|null>(null),[scanner,setScanner]=useState(false),[message,setMessage]=useState(''),[messages,setMessages]=useState<Message[]>([]);
  const loadBuyerStores=async()=>{const ids=readScannedIds();if(!ids.length){setStores([]);return}const {data,error:e}=await supabase.from('stores').select('id,name,address,description,avatar_url,qr_token').in('id',ids);if(e)throw e;const rows=(data||[]) as StoreItem[];const missing=ids.filter(id=>!rows.some(r=>r.id===id));if(missing.length)writeScannedIds(ids.filter(id=>!missing.includes(id)));setStores(rows)};
- useEffect(()=>{(async()=>{try{const n=(localStorage.getItem(NAME_KEY)||'').trim();if(!n){setReady(true);return}const id=await ensureSession('buyer',n);setUserId(id);await loadBuyerStores();setReady(true)}catch(e){setError(e instanceof Error?e.message:'Ошибка подключения.')}})()},[]);
+ useEffect(()=>{(async()=>{try{
+   const n=(localStorage.getItem(NAME_KEY)||'').trim();
+   const result=await ensureSession('buyer',n||undefined);
+   setUserId(result.id);
+   setDisplayName(result.displayName);
+   if(result.displayName!=='Пользователь')localStorage.setItem(NAME_KEY,result.displayName);
+   await loadBuyerStores();
+   setReady(true);
+ }catch(e){setError(e instanceof Error?e.message:'Ошибка подключения.');setReady(true)}})()},[]);
  const filtered=useMemo(()=>stores.filter(s=>s.name.toLowerCase().includes(search.toLowerCase())),[stores,search]);
  const openStore=async(store:StoreItem)=>{if(!userId||loading)return;setLoading(true);try{let {data:chat,error:e}=await supabase.from('chats').select('id').eq('store_id',store.id).eq('buyer_id',userId).maybeSingle();if(e)throw e;if(!chat){const c=await supabase.from('chats').insert({store_id:store.id,buyer_id:userId}).select('id').single();if(c.error)throw c.error;chat=c.data}const r=await supabase.from('messages').select('id,text,photo_url,created_at,sender_id').eq('chat_id',chat.id).order('created_at',{ascending:true});if(r.error)throw r.error;setSelected(store);setSelectedChatId(chat.id);setMessages((r.data||[]).map((m:any)=>({id:m.id,text:m.text||'',photo:m.photo_url,createdAt:m.created_at,senderId:m.sender_id})))}catch(e){setError(e instanceof Error?e.message:'Не удалось открыть чат.')}finally{setLoading(false)}};
  const send=async()=>{const text=message.trim();if(!text||!userId||!selectedChatId)return;setMessage('');const r=await supabase.from('messages').insert({chat_id:selectedChatId,sender_id:userId,text}).select('id,text,photo_url,created_at,sender_id').single();if(r.error){setMessage(text);setError(r.error.message);return}setMessages(c=>[...c,{id:r.data.id,text:r.data.text||'',photo:r.data.photo_url,createdAt:r.data.created_at,senderId:r.data.sender_id}]);await supabase.from('chats').update({updated_at:new Date().toISOString()}).eq('id',selectedChatId)};
  const scanResult=async(decoded:string)=>{const token=decoded.startsWith('kakasta:store:')?decoded.slice(14):decoded;if(!token)return;const r=await supabase.from('stores').select('id,name,address,avatar_url,qr_token').eq('qr_token',token).maybeSingle();if(r.error){setError(r.error.message);return}if(!r.data){setError('Этот QR-код магазина не найден.');return}const store=r.data as StoreItem;writeScannedIds([store.id,...readScannedIds()]);setStores(c=>c.some(x=>x.id===store.id)?c:[store,...c]);setScanner(false);await openStore(store)};
  useEffect(()=>{if(!scanner)return;const reader=new Html5Qrcode('qr-reader');let stopped=false;reader.start({facingMode:'environment'},{fps:10,qrbox:{width:250,height:250}},async(decoded)=>{if(stopped)return;stopped=true;await reader.stop().catch(()=>undefined);await scanResult(decoded)},()=>undefined).catch(e=>setError(e instanceof Error?e.message:'Не удалось открыть камеру.'));return()=>{stopped=true;reader.stop().catch(()=>undefined)}},[scanner]);
  useEffect(()=>{if(!selectedChatId)return;const ch=supabase.channel('kakasta-chat-'+selectedChatId).on('postgres_changes',{event:'INSERT',schema:'public',table:'messages',filter:'chat_id=eq.'+selectedChatId},p=>{const m:any=p.new;setMessages(c=>c.some(x=>x.id===m.id)?c:[...c,{id:m.id,text:m.text||'',photo:m.photo_url,createdAt:m.created_at,senderId:m.sender_id}])}).subscribe();return()=>{supabase.removeChannel(ch)}},[selectedChatId]);
- const enterSeller=async()=>{try{setLoading(true);const id=await ensureSession('seller',displayName);setUserId(id);setSeller(true)}catch(e){setError(e instanceof Error?e.message:'Не удалось открыть кабинет продавца.')}finally{setLoading(false)}};
- const logoutSeller=async()=>{setLoading(true);await supabase.auth.signOut();setSeller(false);setSelected(null);setSelectedChatId(null);setMessages([]);setUserId(null);try{const id=await ensureSession('buyer');setUserId(id);await loadBuyerStores()}catch(e){setError(e instanceof Error?e.message:'Не удалось выйти из кабинета.')}finally{setLoading(false)}};
+ const enterSeller=async()=>{try{setLoading(true);const result=await ensureSession('seller');setUserId(result.id);setDisplayName(result.displayName);setSeller(true)}catch(e){setError(e instanceof Error?e.message:'Не удалось открыть кабинет продавца.')}finally{setLoading(false)}};
+ const logoutSeller=async()=>{setLoading(true);try{const result=await ensureSession('buyer');setUserId(result.id);setDisplayName(result.displayName);setSeller(false);setSelected(null);setSelectedChatId(null);setMessages([]);await loadBuyerStores()}catch(e){setError(e instanceof Error?e.message:'Не удалось выйти из кабинета.')}finally{setLoading(false)}};
  if(!ready)return <main className="app"><div className="loading"><LoaderCircle className="spin"/><b>{error||'Подключаем…'}</b></div></main>;
- if(!displayName)return <main className="app nameScreen"><div className="nameCard"><div className="nameIcon"><UserRound/></div><h1>Как вас называть?</h1><p>Введите имя или название, под которым вас будут видеть.</p><input autoFocus value={nameDraft} onChange={e=>setNameDraft(e.target.value)} onKeyDown={async e=>{if(e.key==='Enter'&&nameDraft.trim()){const n=nameDraft.trim();localStorage.setItem(NAME_KEY,n);setDisplayName(n);const id=await ensureSession('buyer',n);setUserId(id);await loadBuyerStores()}}} placeholder="Ваше имя"/><button disabled={!nameDraft.trim()} onClick={async()=>{const n=nameDraft.trim();localStorage.setItem(NAME_KEY,n);setDisplayName(n);const id=await ensureSession('buyer',n);setUserId(id);await loadBuyerStores()}}>Продолжить</button></div></main>;
+ if(!displayName)return <main className="app nameScreen"><div className="nameCard"><div className="nameIcon"><UserRound/></div><h1>Как вас называть?</h1><p>Введите имя или название, под которым вас будут видеть.</p><input autoFocus value={nameDraft} onChange={e=>setNameDraft(e.target.value)} onKeyDown={async e=>{if(e.key==='Enter'&&nameDraft.trim()){try{const n=nameDraft.trim();const result=await ensureSession('buyer',n);localStorage.setItem(NAME_KEY,n);setDisplayName(result.displayName);setUserId(result.id);await loadBuyerStores()}catch(err){setError(err instanceof Error?err.message:'Не удалось сохранить имя.')}}}} placeholder="Ваше имя"/><button disabled={!nameDraft.trim()} onClick={async()=>{try{const n=nameDraft.trim();const result=await ensureSession('buyer',n);localStorage.setItem(NAME_KEY,n);setDisplayName(result.displayName);setUserId(result.id);await loadBuyerStores()}catch(err){setError(err instanceof Error?err.message:'Не удалось сохранить имя.')}}}>Продолжить</button></div></main>;
  if(selected)return <Chat store={selected} messages={messages} message={message} setMessage={setMessage} send={send} back={()=>{setSelected(null);setSelectedChatId(null);setMessages([])}} userId={userId||''}/>;
  if(seller)return <Seller userId={userId||''} displayName={displayName} onBack={()=>setSeller(false)} onLogout={logoutSeller} onQr={setQr}/>;
  return <main className="app"><div className="sun sun1"/><div className="sun sun2"/><header><div><b>Деловые чаты</b><span>{displayName}</span></div><button className="icon" onClick={enterSeller} aria-label="Моя страница"><UserRound/></button></header><section className="hero"><h1>С кем вы общаетесь</h1><p>Здесь люди и организации, чьи QR-коды вы отсканировали.</p></section><div className="search"><Search/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Поиск" autoComplete="off"/></div><div className="actions"><button onClick={()=>setScanner(true)}><ScanLine/> Сканировать QR</button></div><section className="cards">{filtered.map(store=><article className="card" key={store.id} onClick={()=>openStore(store)}><div className="avatar">{store.avatar_url?<img src={store.avatar_url} alt=""/>:<BriefcaseBusiness/>}</div><div className="cardbody"><strong>{store.name}</strong><span>Открыть чат</span></div><button className={liked[store.id]?'heart active':'heart'} onClick={e=>{e.stopPropagation();setLiked(v=>({...v,[store.id]:!v[store.id]}))}} aria-label="Добавить в избранное"><Heart fill={liked[store.id]?'currentColor':'none'}/></button></article>)}{!filtered.length&&<div className="emptyCard"><BriefcaseBusiness/><b>Контактов пока нет</b><span>Отсканируйте QR-код человека или организации, чтобы добавить контакт.</span></div>}</section>{profile&&<Modal onClose={()=>setProfile(false)} title="Профиль"><p>Покупатель</p><p className="muted">Магазины добавляются только после сканирования их QR-кода.</p></Modal>}{qr&&<QrModal store={qr} onClose={()=>setQr(null)}/>} {scanner&&<Modal onClose={()=>setScanner(false)} title="Сканировать QR"><div id="qr-reader"/><p className="muted">Наведите камеру на QR-код человека или организации.</p></Modal>}{error&&<button className="errorToast" onClick={()=>setError('')}>{error}<span>×</span></button>}{loading&&<div className="loading"><LoaderCircle className="spin"/><b>Подключаем…</b></div>}</main>
