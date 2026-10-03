@@ -30,10 +30,10 @@ async function ensureSession(role:'buyer'|'seller', displayName?:string){
 
   const requestedName=displayName?.trim();
   const existingName=(profile?.display_name||'').trim();
-  const name=requestedName||existingName||'Пользователь';
+  const name=requestedName||existingName;
 
   const payload:any={id:session.user.id,role};
-  if(requestedName || !profile)payload.display_name=name;
+  if(requestedName)payload.display_name=requestedName;
   const {error}=await supabase.from('profiles').upsert(payload);
   if(error)throw error;
   return {id:session.user.id,displayName:name};
@@ -49,7 +49,7 @@ function App(){
    const result=await ensureSession('buyer',n||undefined);
    setUserId(result.id);
    setDisplayName(result.displayName);
-   if(result.displayName!=='Пользователь')localStorage.setItem(NAME_KEY,result.displayName);
+   if(result.displayName)localStorage.setItem(NAME_KEY,result.displayName);
    await loadBuyerStores();
    setReady(true);
  }catch(e){setError(e instanceof Error?e.message:'Ошибка подключения.');setReady(true)}})()},[]);
