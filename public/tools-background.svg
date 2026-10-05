@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 900" fill="none">
+<g opacity=".14" stroke="#0b6b58" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+<path d="M105 160h130l25 25-25 25H105l-25-25 25-25Z"/><path d="M125 160v-45h90v45M145 205v80M195 205v80"/>
+<path d="m680 100 70 70-38 38-70-70 38-38Z"/><path d="m642 138-92 92M714 172l54-54M548 230l-40 40"/>
+<path d="M130 500h120M150 470h80v60h-80zM110 550h160v55H110z"/><path d="M170 605v65M210 605v65"/>
+<circle cx="690" cy="500" r="62"/><circle cx="690" cy="500" r="24"/><path d="m690 414 10 25 27-2 10 24-21 17 14 23-21 17-22-16-22 16-21-17 14-23-21-17 10-24 27 2 10-25Z"/>
+<path d="M440 650h150l25 25-25 25H440l-25-25 25-25Z"/><path d="M465 650v-85h100v85M485 565v-55M545 565v-55"/>
+<path d="m765 700-95-95M765 700l-34 34M670 605l-25 25M800 735l-35-35"/>
+<path d="M90 780h170M120 750h110v60H120z"/><path d="M145 750v-45h60v45"/>
+</g>
+<g opacity=".08" fill="#0b6b58"><circle cx="340" cy="160" r="7"/><circle cx="390" cy="220" r="4"/><circle cx="320" cy="720" r="6"/><circle cx="600" cy="350" r="5"/><circle cx="820" cy="420" r="7"/></g>
+</svg>
