@@ -1,0 +1,4 @@
+project_id = "hanykwqmarplohslkdka"
+
+[functions.kakasta-recover]
+verify_jwt = false
